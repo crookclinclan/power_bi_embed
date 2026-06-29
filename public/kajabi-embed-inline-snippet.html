@@ -1,8 +1,6 @@
 <!--
-  KAJABI FIX: External kajabi-embed.js is blocked on passgp.au product dashboards.
-  In Embedded Scripts, REPLACE this line:
-    <script src="https://passgp-powerbi-embed.onrender.com/kajabi-embed.js"></script>
-  WITH the <script>...</script> block below (keep PASSGP_EMBED_API config above it).
+  KAJABI: Paste in Product → Custom Code → Embedded Scripts
+  (keep PASSGP_EMBED_API + PASSGP_EMBED_API_KEY config above this block)
 -->
 
 <script>
@@ -13,12 +11,13 @@
   var API_KEY = (window.PASSGP_EMBED_API_KEY || '').trim();
   var CONTAINER_ID = 'passgp-pbi-report';
   var FULLSCREEN_LINK_ID = 'passgp-pbi-fullscreen';
-  var FRAME_PATH = '/kajabi-frame.html';
   var FULLSCREEN_PATH = '/kajabi-fullscreen.html';
-  var PBI_CDN = 'https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js';
   var pendingTargets = [];
-  var fetchStarted = false;
+  var sessionFetch = null;
   var cachedSession = null;
+  var iframeBound = false;
+  var pollTimer = null;
+
   function getMemberId() {
     try {
       var u = window.Kajabi && window.Kajabi.currentSiteUser;
@@ -56,16 +55,11 @@
   async function hmacSha256Hex(secret, message) {
     var enc = new TextEncoder();
     var key = await crypto.subtle.importKey(
-      'raw',
-      enc.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign'],
+      'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
     );
     var sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
     return Array.from(new Uint8Array(sig))
-      .map(function (b) { return b.toString(16).padStart(2, '0'); })
-      .join('');
+      .map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
   }
   async function buildSignedPayload(memberId) {
     var ts = Date.now();
@@ -75,18 +69,11 @@
   function isPassgpFrame(el) {
     if (!el || el.tagName !== 'IFRAME') return false;
     var src = (el.getAttribute('src') || '').toLowerCase();
-    return src.indexOf('kajabi-frame.html') !== -1 ||
-      src.indexOf('kajabi-fullscreen.html') !== -1 ||
-      src.indexOf('passgp-powerbi-embed') !== -1 ||
-      src.indexOf('power-bi-embed') !== -1;
+    return src.indexOf('kajabi-frame.html') !== -1 || src.indexOf('power-bi-embed') !== -1;
   }
   function findEmbedIframe() {
     var byId = document.getElementById(CONTAINER_ID);
     if (byId && byId.tagName === 'IFRAME') return byId;
-    var byName = document.getElementsByName(CONTAINER_ID);
-    for (var n = 0; n < byName.length; n++) {
-      if (byName[n].tagName === 'IFRAME') return byName[n];
-    }
     var iframes = document.querySelectorAll('iframe');
     for (var i = 0; i < iframes.length; i++) {
       if (isPassgpFrame(iframes[i])) return iframes[i];
@@ -131,70 +118,57 @@
     if (!data.rlsUsername && !data.memberId) throw new Error('Could not resolve member');
     return data;
   }
+  function ensureSessionFetch() {
+    if (cachedSession) return Promise.resolve(cachedSession);
+    if (sessionFetch) return sessionFetch;
+    sessionFetch = fetchEmbedSession()
+      .then(function (data) { cachedSession = data; return data; })
+      .finally(function () { sessionFetch = null; });
+    return sessionFetch;
+  }
   async function servePendingTargets() {
     if (!pendingTargets.length) return;
-    if (cachedSession) {
-      var ready = pendingTargets.slice();
-      pendingTargets = [];
-      for (var k = 0; k < ready.length; k++) deliverSession(ready[k], cachedSession);
-      return;
-    }
-    if (fetchStarted) return;
-    fetchStarted = true;
     var targets = pendingTargets.slice();
     pendingTargets = [];
-    var session;
-    try { session = await fetchEmbedSession(); }
-    catch (err) {
+    try {
+      var session = await ensureSessionFetch();
+      for (var j = 0; j < targets.length; j++) deliverSession(targets[j], session);
+    } catch (err) {
       var msg = err && err.message ? err.message : 'Could not load dashboard';
       for (var i = 0; i < targets.length; i++) sendError(targets[i], msg);
-      fetchStarted = false;
-      return;
     }
-    cachedSession = session;
-    for (var j = 0; j < targets.length; j++) deliverSession(targets[j], session);
-    if (pendingTargets.length) { fetchStarted = false; servePendingTargets(); }
+    if (pendingTargets.length) servePendingTargets();
   }
   function onFrameReady(sourceWindow) {
-    queueTarget(sourceWindow);
+    if (!sourceWindow) return;
     if (cachedSession) { deliverSession(sourceWindow, cachedSession); return; }
+    queueTarget(sourceWindow);
     servePendingTargets();
   }
   function bindFullscreenLink() {
     if (!API_BASE) return;
-    var selector =
-      '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]';
-    var links = document.querySelectorAll(selector);
-    for (var i = 0; i < links.length; i++) {
-      var link = links[i];
-      if (link.dataset.passgpBound === '1') continue;
-      link.dataset.passgpBound = '1';
-      link.href = API_BASE + FULLSCREEN_PATH;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-    }
-  }
-  function installFullscreenDelegation() {
-    if (window.__PASSGP_FULLSCREEN_CLICK__) return;
-    window.__PASSGP_FULLSCREEN_CLICK__ = true;
-    document.addEventListener('click', function (e) {
-      if (!API_BASE) return;
-      var link = e.target.closest && e.target.closest(
-        '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]'
-      );
-      if (!link) return;
-      link.href = API_BASE + FULLSCREEN_PATH;
-      link.target = '_blank';
-    }, true);
+    var link = document.getElementById(FULLSCREEN_LINK_ID);
+    if (!link || link.dataset.passgpBound === '1') return;
+    link.dataset.passgpBound = '1';
+    link.href = API_BASE + FULLSCREEN_PATH;
+    link.target = '_blank';
+    link.addEventListener('click', function (e) {
+      e.preventDefault();
+      var win = window.open(API_BASE + FULLSCREEN_PATH, 'passgp-pbi-fullscreen');
+      if (!win) return;
+      onFrameReady(win);
+    });
   }
   function bindIframe(iframe) {
+    if (iframe.dataset.passgpIframeBound === '1') return;
+    iframe.dataset.passgpIframeBound = '1';
+    iframeBound = true;
     function tryQueue() {
       if (iframe.contentWindow) onFrameReady(iframe.contentWindow);
     }
     iframe.addEventListener('load', tryQueue);
     tryQueue();
     setTimeout(tryQueue, 500);
-    setTimeout(tryQueue, 2000);
   }
   function bootIframe() {
     var iframe = findEmbedIframe();
@@ -202,7 +176,14 @@
     bindIframe(iframe);
     return true;
   }
-  function boot() { installFullscreenDelegation(); bindFullscreenLink(); bootIframe(); }
+  function stopPoll() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  function boot() {
+    bindFullscreenLink();
+    bootIframe();
+    if (iframeBound && cachedSession) stopPoll();
+  }
   window.addEventListener('message', function (event) {
     if (event.origin !== API_BASE) return;
     if (!event.data || event.data.type !== 'passgp-embed-ready') return;
@@ -212,10 +193,10 @@
     document.addEventListener('DOMContentLoaded', boot);
   } else { boot(); }
   var poll = 0;
-  var pollTimer = setInterval(function () {
+  pollTimer = setInterval(function () {
     poll += 1;
     boot();
-    if (poll > 600) clearInterval(pollTimer);
+    if (poll > 40 || (iframeBound && cachedSession)) stopPoll();
   }, 500);
 })();
 </script>

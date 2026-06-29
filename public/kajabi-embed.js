@@ -14,8 +14,10 @@
   var FULLSCREEN_PATH = '/kajabi-fullscreen.html';
   var PBI_CDN = 'https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js';
   var pendingTargets = [];
-  var fetchStarted = false;
+  var sessionFetch = null;
   var cachedSession = null;
+  var iframeBound = false;
+  var pollTimer = null;
 
   function getMemberId() {
     try {
@@ -155,90 +157,65 @@
     return data;
   }
 
+  function ensureSessionFetch() {
+    if (cachedSession) return Promise.resolve(cachedSession);
+    if (sessionFetch) return sessionFetch;
+    sessionFetch = fetchEmbedSession()
+      .then(function (data) {
+        cachedSession = data;
+        return data;
+      })
+      .finally(function () {
+        sessionFetch = null;
+      });
+    return sessionFetch;
+  }
+
   async function servePendingTargets() {
     if (!pendingTargets.length) return;
-
-    if (cachedSession) {
-      var ready = pendingTargets.slice();
-      pendingTargets = [];
-      for (var k = 0; k < ready.length; k++) {
-        deliverSession(ready[k], cachedSession);
-      }
-      return;
-    }
-
-    if (fetchStarted) return;
-    fetchStarted = true;
-
     var targets = pendingTargets.slice();
     pendingTargets = [];
-    var session;
-
     try {
-      session = await fetchEmbedSession();
+      var session = await ensureSessionFetch();
+      for (var j = 0; j < targets.length; j++) {
+        deliverSession(targets[j], session);
+      }
     } catch (err) {
       var msg = err && err.message ? err.message : 'Could not load dashboard';
       for (var i = 0; i < targets.length; i++) {
         sendError(targets[i], msg);
       }
-      fetchStarted = false;
-      return;
     }
-
-    cachedSession = session;
-    for (var j = 0; j < targets.length; j++) {
-      deliverSession(targets[j], session);
-    }
-    // Deliver to any targets queued while fetch was in flight (e.g. fullscreen tab)
-    if (pendingTargets.length) {
-      fetchStarted = false;
-      servePendingTargets();
-    }
+    if (pendingTargets.length) servePendingTargets();
   }
 
   function onFrameReady(sourceWindow) {
-    queueTarget(sourceWindow);
+    if (!sourceWindow) return;
     if (cachedSession) {
       deliverSession(sourceWindow, cachedSession);
       return;
     }
+    queueTarget(sourceWindow);
     servePendingTargets();
   }
 
   function bindFullscreenLink() {
     if (!API_BASE) return;
-    var selector =
-      '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]';
-    var links = document.querySelectorAll(selector);
-    for (var i = 0; i < links.length; i++) {
-      var link = links[i];
-      if (link.dataset.passgpBound === '1') continue;
-      link.dataset.passgpBound = '1';
-      link.href = API_BASE + FULLSCREEN_PATH;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      // Native navigation — new tab keeps window.opener so fullscreen page can auth
-    }
-  }
-
-  function installFullscreenDelegation() {
-    if (window.__PASSGP_FULLSCREEN_CLICK__) return;
-    window.__PASSGP_FULLSCREEN_CLICK__ = true;
-    document.addEventListener(
-      'click',
-      function (e) {
-        if (!API_BASE) return;
-        var link =
-          e.target.closest &&
-          e.target.closest(
-            '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]',
-          );
-        if (!link) return;
-        link.href = API_BASE + FULLSCREEN_PATH;
-        link.target = '_blank';
-      },
-      true,
-    );
+    var link = document.getElementById(FULLSCREEN_LINK_ID);
+    if (!link || link.dataset.passgpBound === '1') return;
+    link.dataset.passgpBound = '1';
+    link.href = API_BASE + FULLSCREEN_PATH;
+    link.target = '_blank';
+    // Do NOT use rel=noopener — fullscreen tab needs window.opener to receive token
+    link.addEventListener('click', function (e) {
+      e.preventDefault();
+      var win = window.open(API_BASE + FULLSCREEN_PATH, 'passgp-pbi-fullscreen');
+      if (!win) {
+        window.location.href = API_BASE + FULLSCREEN_PATH;
+        return;
+      }
+      onFrameReady(win);
+    });
   }
 
   async function runDirectEmbed(container) {
@@ -250,8 +227,11 @@
   }
 
   function bindIframe(iframe) {
+    if (iframe.dataset.passgpIframeBound === '1') return;
+    iframe.dataset.passgpIframeBound = '1';
+    iframeBound = true;
     if (!iframe.getAttribute('src') || iframe.getAttribute('src') === 'about:blank') {
-      iframe.setAttribute('src', API_BASE + FRAME_PATH + '?debug=1');
+      iframe.setAttribute('src', API_BASE + FRAME_PATH);
     }
     function tryQueue() {
       if (iframe.contentWindow) onFrameReady(iframe.contentWindow);
@@ -259,7 +239,6 @@
     iframe.addEventListener('load', tryQueue);
     tryQueue();
     setTimeout(tryQueue, 500);
-    setTimeout(tryQueue, 2000);
   }
 
   function bootDirect() {
@@ -282,11 +261,21 @@
     return true;
   }
 
+  function stopPoll() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
   function boot() {
-    installFullscreenDelegation();
     bindFullscreenLink();
-    if (bootDirect()) return;
+    if (bootDirect()) {
+      stopPoll();
+      return;
+    }
     bootIframe();
+    if (iframeBound && cachedSession) stopPoll();
   }
 
   window.addEventListener('message', function (event) {
@@ -302,9 +291,9 @@
   }
 
   var poll = 0;
-  var pollTimer = setInterval(function () {
+  pollTimer = setInterval(function () {
     poll += 1;
     boot();
-    if (poll > 600) clearInterval(pollTimer);
+    if (poll > 40 || (iframeBound && cachedSession)) stopPoll();
   }, 500);
 })();
