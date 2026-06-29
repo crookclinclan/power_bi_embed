@@ -90,6 +90,23 @@
     return report.updateSettings(embedPaneSettings(models)).catch(function () {});
   }
 
+  function isExcludedPage(page) {
+    var displayName = page.displayName || '';
+    var internalName = page.name || '';
+    return (
+      LANDING_PAGE_RE.test(displayName) ||
+      EXCLUDED_EMBED_PAGE_RE.test(displayName) ||
+      EXCLUDED_EMBED_PAGE_RE.test(internalName)
+    );
+  }
+
+  function redirectIfExcludedPage(report, preferredPageName) {
+    return report.getActivePage().then(function (page) {
+      if (!isExcludedPage(page)) return;
+      return activateResultsPage(report, preferredPageName);
+    });
+  }
+
   function activateResultsPage(report, preferredPageName) {
     if (preferredPageName) {
       return report.setPage(preferredPageName).catch(function () {
@@ -115,34 +132,22 @@
   function embedPassgpReport(container, data) {
     var config = buildEmbedConfig(data);
     var pageName = resolvePageName(data);
-    var lockedPageName = pageName || '';
     applyEmbedHeight(container);
     global.powerbi.reset(container);
     var report = global.powerbi.embed(container, config);
 
     report.on('loaded', function () {
       hidePageNavigation(report);
-      activateResultsPage(report, pageName)
-        .then(function () {
-          if (lockedPageName) return;
-          return report.getActivePage().then(function (page) {
-            lockedPageName = page.name;
-          });
-        })
-        .catch(function () {});
+      activateResultsPage(report, pageName).catch(function () {});
     });
 
     report.on('rendered', function () {
       hidePageNavigation(report);
     });
 
+    // Allow in-report buttons to navigate between member pages; only block Landing/QA.
     report.on('pageChanged', function () {
-      if (!lockedPageName) return;
-      report.getActivePage().then(function (page) {
-        if (page.name !== lockedPageName) {
-          report.setPage(lockedPageName).catch(function () {});
-        }
-      }).catch(function () {});
+      redirectIfExcludedPage(report, pageName).catch(function () {});
     });
 
     return report;
