@@ -145,18 +145,6 @@
     queueTarget(sourceWindow);
     servePendingTargets();
   }
-  function bindFullscreenLink() {
-    if (!API_BASE) return;
-    var link = document.getElementById(FULLSCREEN_LINK_ID);
-    if (!link || link.dataset.passgpBound === '1') return;
-    link.dataset.passgpBound = '1';
-    link.href = API_BASE + FULLSCREEN_PATH;
-    link.target = '_blank';
-    link.addEventListener('click', function (e) {
-      e.preventDefault();
-      openFullscreenTab();
-    });
-  }
   async function openFullscreenTab() {
     try {
       var session = await ensureSessionFetch();
@@ -168,9 +156,49 @@
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not open full screen');
       var url = API_BASE + FULLSCREEN_PATH + '?h=' + encodeURIComponent(data.handoffId);
-      window.open(url, 'passgp-pbi-fullscreen');
+      var win = window.open(url, 'passgp-pbi-fullscreen');
+      if (!win) {
+        var a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
     } catch (err) {
       window.alert(err && err.message ? err.message : 'Could not open full screen');
+    }
+  }
+  function isFullscreenLink(el) {
+    if (!el || el.tagName !== 'A') return false;
+    if (el.id === FULLSCREEN_LINK_ID) return true;
+    if (el.getAttribute('data-passgp-fullscreen') === '1') return true;
+    var href = (el.getAttribute('href') || '').toLowerCase();
+    return href.indexOf('kajabi-fullscreen.html') !== -1;
+  }
+  function installFullscreenClickCapture() {
+    if (window.__PASSGP_FS_CAPTURE__) return;
+    window.__PASSGP_FS_CAPTURE__ = true;
+    document.addEventListener('click', function (e) {
+      var link = e.target.closest && e.target.closest('a');
+      if (!link || !isFullscreenLink(link)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      openFullscreenTab();
+    }, true);
+  }
+  function bindFullscreenLink() {
+    if (!API_BASE) return;
+    var links = document.querySelectorAll(
+      '#' + FULLSCREEN_LINK_ID + ', [data-passgp-fullscreen="1"], a[href*="kajabi-fullscreen"]'
+    );
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i];
+      if (link.dataset.passgpBound === '1') continue;
+      link.dataset.passgpBound = '1';
+      link.href = '#';
+      link.setAttribute('role', 'button');
     }
   }
   function bindIframe(iframe) {
@@ -196,8 +224,8 @@
   function boot() {
     bindFullscreenLink();
     bootIframe();
-    if (iframeBound && cachedSession) stopPoll();
   }
+  installFullscreenClickCapture();
   window.addEventListener('message', function (event) {
     if (event.origin !== API_BASE) return;
     if (!event.data || event.data.type !== 'passgp-embed-ready') return;
@@ -210,7 +238,7 @@
   pollTimer = setInterval(function () {
     poll += 1;
     boot();
-    if (poll > 40 || (iframeBound && cachedSession)) stopPoll();
+    if (poll > 120) stopPoll();
   }, 500);
 })();
 </script>
