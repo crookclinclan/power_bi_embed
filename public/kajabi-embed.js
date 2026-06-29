@@ -206,16 +206,30 @@
     link.dataset.passgpBound = '1';
     link.href = API_BASE + FULLSCREEN_PATH;
     link.target = '_blank';
-    // Do NOT use rel=noopener — fullscreen tab needs window.opener to receive token
     link.addEventListener('click', function (e) {
       e.preventDefault();
-      var win = window.open(API_BASE + FULLSCREEN_PATH, 'passgp-pbi-fullscreen');
-      if (!win) {
-        window.location.href = API_BASE + FULLSCREEN_PATH;
-        return;
-      }
-      onFrameReady(win);
+      openFullscreenTab();
     });
+  }
+
+  async function openFullscreenTab() {
+    try {
+      var session = await ensureSessionFetch();
+      var res = await fetch(API_BASE + '/api/powerbi/handoff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        body: JSON.stringify({ session: session }),
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not open full screen');
+      var url = API_BASE + FULLSCREEN_PATH + '?h=' + encodeURIComponent(data.handoffId);
+      window.open(url, 'passgp-pbi-fullscreen');
+    } catch (err) {
+      window.alert(err && err.message ? err.message : 'Could not open full screen');
+    }
   }
 
   async function runDirectEmbed(container) {
