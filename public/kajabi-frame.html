@@ -5,18 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PassGP Analytics</title>
   <style>
-    html, body { margin: 0; padding: 0; background: #fff; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #fff; }
     #passgp-pbi-report {
       width: 100%;
-      aspect-ratio: 16 / 9;
-      min-height: 480px;
-      max-height: 75vh;
+      height: 100%;
     }
     #passgp-pbi-report iframe {
       width: 100% !important;
       height: 100% !important;
-      min-height: 100% !important;
       border: 0;
+      display: block;
     }
     #passgp-debug {
       display: none;

@@ -134,11 +134,9 @@
       container.style.minHeight = custom;
       return;
     }
-    // Power BI standard 16:9 canvas — same approach as Microsoft embed samples
-    container.style.aspectRatio = '16 / 9';
-    container.style.minHeight = '480px';
-    container.style.maxHeight = '75vh';
-    container.style.height = 'auto';
+    // Fill parent iframe — outer Kajabi wrapper controls aspect ratio / height
+    container.style.height = '100%';
+    container.style.minHeight = '100%';
   }
 
   function embedPassgpReport(container, data) {
