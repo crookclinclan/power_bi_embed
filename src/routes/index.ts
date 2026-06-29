@@ -9,8 +9,8 @@ export const apiRouter = Router()
 
 apiRouter.use(healthRouter)
 apiRouter.use('/powerbi', embedRouter)
-apiRouter.use('/test', testRouter)
 
 if (!env.isProduction) {
+  apiRouter.use('/test', testRouter)
   apiRouter.use('/dev', devRouter)
 }
