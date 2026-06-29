@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PassGP Power BI Embed Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js"></script>
+  <script src="/pbi-embed-helpers.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #f6f8fd; max-width: 960px; }
+    #report { height: 80vh; background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; margin-top: 16px; }
+    .row { margin-bottom: 12px; }
+    input { padding: 8px 12px; width: min(420px, 100%); box-sizing: border-box; }
+    button { padding: 8px 16px; cursor: pointer; }
+    .err { color: #b91c1c; margin-top: 12px; }
+    .hint { color: #64748b; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>PassGP Power BI Embed Test</h1>
+  <p class="hint">Enter member_id (and optional email for fallback testing).</p>
+  <div class="row">
+    <label>API base: <input id="apiBase" /></label>
+  </div>
+  <div class="row">
+    <label>member_id: <input id="memberId" placeholder="2453739162" /></label>
+  </div>
+  <div class="row">
+    <label>email (optional): <input id="memberEmail" placeholder="geo_357@hotmail.com" /></label>
+    <button id="loadBtn">Load report</button>
+  </div>
+  <div id="err" class="err"></div>
+  <div id="report"></div>
+  <script>
+    document.getElementById('apiBase').value = location.origin;
+
+    document.getElementById('loadBtn').addEventListener('click', async function () {
+      var errEl = document.getElementById('err');
+      errEl.textContent = '';
+      var apiBase = document.getElementById('apiBase').value.replace(/\/$/, '');
+      var memberId = document.getElementById('memberId').value.trim();
+      var memberEmail = document.getElementById('memberEmail').value.trim();
+
+      if (!memberId) {
+        errEl.textContent = 'Enter member_id';
+        return;
+      }
+
+      try {
+        var url =
+          apiBase +
+          '/api/test/embed-token?memberId=' +
+          encodeURIComponent(memberId);
+        if (memberEmail) {
+          url += '&email=' + encodeURIComponent(memberEmail);
+        }
+        var res = await fetch(url);
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        if (!data.rlsUsername && !data.memberId) throw new Error('API did not resolve member');
+        window.PassgpPbiEmbed.embedPassgpReport(document.getElementById('report'), data);
+      } catch (e) {
+        errEl.textContent = e.message || String(e);
+      }
+    });
+  </script>
+</body>
+</html>

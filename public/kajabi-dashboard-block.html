@@ -1,0 +1,28 @@
+<!--
+  KAJABI FIX: Replace the Text block with a CUSTOM CODE block on the dashboard page.
+  Custom Code allows <script> tags on the same page as the iframe.
+
+  Steps:
+  1. Remove the Text block iframe (or whole Performance Analytics text block)
+  2. Add block → Custom Code
+  3. Paste everything below
+  4. Keep Product Embedded Scripts protection code as-is (optional duplicate config is OK)
+-->
+
+<p><strong><span style="color: #009ffd;">Performance Analytics</span></strong></p>
+<p>Track your progress, benchmark your performance against the cohort, and identify high-risk categories requiring further revision.</p>
+<p><strong><span style="color: #ffa400;">Getting Started</span></strong></p>
+<ul>
+<li><a href="https://www.passgp.au/products/nzrex-clinical-exam-bank/categories/2160087311/posts/2197525353" target="_blank" rel="noopener noreferrer">Dashboard Instructions</a> – Learn how to navigate the dashboard and interpret your performance data</li>
+</ul>
+
+<script>
+  window.PASSGP_EMBED_API = 'https://passgp-powerbi-embed.onrender.com';
+  window.PASSGP_EMBED_API_KEY = 'YOUR_API_SECRET_SAME_AS_RENDER';
+</script>
+<script src="https://passgp-powerbi-embed.onrender.com/kajabi-embed.js"></script>
+
+<iframe id="passgp-pbi-report"
+  src="https://passgp-powerbi-embed.onrender.com/kajabi-frame.html?debug=1"
+  style="width:100%;min-height:720px;border:0;display:block;"
+  title="PassGP Analytics"></iframe>

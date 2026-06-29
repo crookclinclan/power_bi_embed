@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PassGP Analytics</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #fff; }
+    #passgp-pbi-report {
+      width: 100%;
+      height: 900px;
+      min-height: 900px;
+    }
+    #passgp-pbi-report iframe {
+      width: 100% !important;
+      height: 900px !important;
+      min-height: 900px !important;
+      border: 0;
+    }
+    #passgp-debug {
+      display: none;
+      font: 11px/1.5 ui-monospace, monospace;
+      color: #475569;
+      padding: 8px 12px;
+      border-top: 1px solid #e2e8f0;
+      background: #f8fafc;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div id="passgp-pbi-report"></div>
+  <div id="passgp-debug"></div>
+  <script src="/kajabi-embed-runner.js"></script>
+  <script src="/pbi-embed-helpers.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var container = document.getElementById('passgp-pbi-report');
+      var debugEl = document.getElementById('passgp-debug');
+      var started = false;
+      var pingCount = 0;
+      var pingTimer = null;
+      var debug = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+      var allowedOrigins = [
+        'https://www.passgp.au',
+        'https://passgp.au',
+        'http://localhost:5051',
+        'http://127.0.0.1:5051',
+      ];
+
+      if (debug && debugEl) debugEl.style.display = 'block';
+
+      function log(line) {
+        if (!debug || !debugEl) return;
+        debugEl.textContent = (debugEl.textContent ? debugEl.textContent + '\n' : '') + line;
+      }
+
+      function stopPinging() {
+        if (pingTimer) {
+          clearInterval(pingTimer);
+          pingTimer = null;
+        }
+      }
+
+      function isAllowedOrigin(origin) {
+        if (!origin) return false;
+        for (var i = 0; i < allowedOrigins.length; i++) {
+          if (origin === allowedOrigins[i]) return true;
+        }
+        return false;
+      }
+
+      function pingParents() {
+        if (started) return;
+        var msg = { type: 'passgp-embed-ready' };
+        try {
+          if (window.top && window.top !== window) window.top.postMessage(msg, '*');
+        } catch (e1) {
+          log('ping top failed: ' + (e1.message || e1));
+        }
+        try {
+          if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*');
+        } catch (e2) {
+          log('ping parent failed: ' + (e2.message || e2));
+        }
+        log('ping #' + pingCount + ' sent');
+      }
+
+      async function renderSession(session) {
+        if (started) return;
+        started = true;
+        stopPinging();
+        log('token received — embedding report…');
+        PassgpKajabiEmbed.showLoading(container, 'Loading your dashboard…');
+        try {
+          if (!window.PassgpPbiEmbed) {
+            throw new Error('Power BI embed library failed to load.');
+          }
+          window.PassgpPbiEmbed.embedPassgpReport(container, session);
+          if (debugEl) debugEl.style.display = 'none';
+        } catch (e) {
+          PassgpKajabiEmbed.showError(container, e.message || 'Could not display dashboard.');
+          log('embed error: ' + (e.message || e));
+        }
+      }
+
+      PassgpKajabiEmbed.showLoading(container, 'Loading your dashboard…');
+
+      window.addEventListener('message', function (event) {
+        if (!isAllowedOrigin(event.origin)) return;
+        var data = event.data || {};
+        log('message type=' + (data.type || '?'));
+
+        if (data.type === 'passgp-embed-data' && data.session) {
+          renderSession(data.session);
+          return;
+        }
+
+        if (data.type === 'passgp-embed-error' && !started) {
+          started = true;
+          stopPinging();
+          PassgpKajabiEmbed.showError(container, data.error || 'Could not load dashboard.');
+          log('parent error: ' + (data.error || 'unknown'));
+        }
+      });
+
+      pingParents();
+      pingTimer = setInterval(function () {
+        pingCount += 1;
+        pingParents();
+        if (started || pingCount > 30) {
+          stopPinging();
+          if (!started) {
+            PassgpKajabiEmbed.showError(
+              container,
+              'Could not connect to PassGP. Please refresh the page.',
+            );
+            log('timeout after 30s');
+          }
+        }
+      }, 1000);
+    })();
+  </script>
+</body>
+</html>

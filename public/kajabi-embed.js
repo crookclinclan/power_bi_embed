@@ -1,0 +1,244 @@
+/**
+ * PassGP Kajabi embed — parent page (Embedded Scripts or dashboard Custom Code block).
+ */
+(function () {
+  'use strict';
+
+  window.__PASSGP_EMBED_PARENT__ = true;
+
+  var API_BASE = (window.PASSGP_EMBED_API || '').replace(/\/$/, '');
+  var API_KEY = (window.PASSGP_EMBED_API_KEY || '').trim();
+  var CONTAINER_ID = 'passgp-pbi-report';
+  var FRAME_PATH = '/kajabi-frame.html';
+  var PBI_CDN = 'https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js';
+  var pendingTargets = [];
+  var fetchStarted = false;
+
+  function getMemberId() {
+    try {
+      var u = window.Kajabi && window.Kajabi.currentSiteUser;
+      if (!u) return '';
+      var cid = u.contactId == null ? '' : String(u.contactId).trim();
+      if (cid && cid.toLowerCase() !== 'null') return cid;
+      var id = u.id == null ? '' : String(u.id).trim();
+      if (id && id.toLowerCase() !== 'null') return id;
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function getMemberEmail() {
+    try {
+      var u = window.Kajabi && window.Kajabi.currentSiteUser;
+      if (!u) return '';
+      var email = u.email == null ? '' : String(u.email).trim();
+      if (email && email.toLowerCase() !== 'null') return email;
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function waitForMemberId(maxMs) {
+    return new Promise(function (resolve, reject) {
+      var elapsed = 0;
+      var step = 250;
+      var timer = setInterval(function () {
+        var id = getMemberId();
+        if (id) {
+          clearInterval(timer);
+          resolve(id);
+          return;
+        }
+        elapsed += step;
+        if (elapsed >= maxMs) {
+          clearInterval(timer);
+          reject(new Error('Kajabi member_id not available. Please log in and refresh.'));
+        }
+      }, step);
+    });
+  }
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      if (document.querySelector('script[src="' + src + '"]')) return resolve();
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = function () {
+        reject(new Error('Failed to load script: ' + src));
+      };
+      document.head.appendChild(s);
+    });
+  }
+
+  function isPassgpFrame(el) {
+    if (!el || el.tagName !== 'IFRAME') return false;
+    var src = (el.getAttribute('src') || '').toLowerCase();
+    return src.indexOf('kajabi-frame.html') !== -1 || src.indexOf('passgp-powerbi-embed') !== -1;
+  }
+
+  function findEmbedIframe() {
+    var byId = document.getElementById(CONTAINER_ID);
+    if (byId && byId.tagName === 'IFRAME') return byId;
+
+    var byName = document.getElementsByName(CONTAINER_ID);
+    for (var n = 0; n < byName.length; n++) {
+      if (byName[n].tagName === 'IFRAME') return byName[n];
+    }
+
+    var iframes = document.querySelectorAll('iframe');
+    for (var i = 0; i < iframes.length; i++) {
+      if (isPassgpFrame(iframes[i])) return iframes[i];
+    }
+    return null;
+  }
+
+  function postToFrame(targetWindow, message) {
+    if (!targetWindow || !API_BASE) return false;
+    try {
+      targetWindow.postMessage(message, API_BASE);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function queueTarget(targetWindow) {
+    if (!targetWindow) return;
+    for (var i = 0; i < pendingTargets.length; i++) {
+      if (pendingTargets[i] === targetWindow) return;
+    }
+    pendingTargets.push(targetWindow);
+  }
+
+  function sendError(targetWindow, message) {
+    postToFrame(targetWindow, { type: 'passgp-embed-error', error: message });
+  }
+
+  function deliverSession(targetWindow, session) {
+    postToFrame(targetWindow, { type: 'passgp-embed-data', session: session });
+  }
+
+  async function fetchEmbedSession() {
+    if (!API_BASE) throw new Error('PASSGP_EMBED_API is not configured.');
+    if (!API_KEY) throw new Error('PASSGP_EMBED_API_KEY is not configured.');
+
+    await waitForMemberId(10000);
+
+    await loadScript(API_BASE + '/sign-request.js');
+
+    var memberId = getMemberId();
+    var payload = await window.PassgpSign.buildBody(memberId, API_KEY);
+    var email = getMemberEmail();
+    if (email) payload.email = email;
+
+    var res = await fetch(API_BASE + '/api/powerbi/embed-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load dashboard');
+    if (!data.rlsUsername && !data.memberId) throw new Error('Could not resolve member');
+    return data;
+  }
+
+  async function servePendingTargets() {
+    if (fetchStarted || !pendingTargets.length) return;
+    fetchStarted = true;
+
+    var targets = pendingTargets.slice();
+    var session;
+
+    try {
+      session = await fetchEmbedSession();
+    } catch (err) {
+      var msg = err && err.message ? err.message : 'Could not load dashboard';
+      for (var i = 0; i < targets.length; i++) {
+        sendError(targets[i], msg);
+      }
+      fetchStarted = false;
+      return;
+    }
+
+    for (var j = 0; j < targets.length; j++) {
+      deliverSession(targets[j], session);
+    }
+  }
+
+  function onFrameReady(sourceWindow) {
+    queueTarget(sourceWindow);
+    servePendingTargets();
+  }
+
+  async function runDirectEmbed(container) {
+    await loadScript(API_BASE + '/kajabi-embed-runner.js');
+    await loadScript(API_BASE + '/pbi-embed-helpers.js');
+    await loadScript(PBI_CDN);
+    var session = await fetchEmbedSession();
+    window.PassgpPbiEmbed.embedPassgpReport(container, session);
+  }
+
+  function bindIframe(iframe) {
+    if (!iframe.getAttribute('src') || iframe.getAttribute('src') === 'about:blank') {
+      iframe.setAttribute('src', API_BASE + FRAME_PATH + '?debug=1');
+    }
+    function tryQueue() {
+      if (iframe.contentWindow) onFrameReady(iframe.contentWindow);
+    }
+    iframe.addEventListener('load', tryQueue);
+    tryQueue();
+    setTimeout(tryQueue, 500);
+    setTimeout(tryQueue, 2000);
+  }
+
+  function bootDirect() {
+    var el = document.getElementById(CONTAINER_ID);
+    if (!el || el.tagName === 'IFRAME') return false;
+    runDirectEmbed(el).catch(function (e) {
+      el.innerHTML =
+        '<div style="padding:24px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:12px;font-family:system-ui,sans-serif">' +
+        '<strong>Analytics unavailable</strong><p style="margin:8px 0 0">' +
+        (e.message || 'Something went wrong.') +
+        '</p></div>';
+    });
+    return true;
+  }
+
+  function bootIframe() {
+    var iframe = findEmbedIframe();
+    if (!iframe) return false;
+    bindIframe(iframe);
+    return true;
+  }
+
+  function boot() {
+    if (bootDirect()) return;
+    bootIframe();
+  }
+
+  window.addEventListener('message', function (event) {
+    if (event.origin !== API_BASE) return;
+    if (!event.data || event.data.type !== 'passgp-embed-ready') return;
+    onFrameReady(event.source);
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+
+  var poll = 0;
+  var pollTimer = setInterval(function () {
+    poll += 1;
+    boot();
+    if (poll > 120) clearInterval(pollTimer);
+  }, 500);
+})();

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+passgp-9d49e1aae79e.json
+*-service-account*.json
+.DS_Store
+*.log
