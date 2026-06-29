@@ -28,6 +28,10 @@
   function embedPaneSettings(models) {
     return {
       navContentPaneEnabled: false,
+      layoutType: models.LayoutType.Custom,
+      customLayout: {
+        displayOption: models.DisplayOption.FitToWidth,
+      },
       panes: {
         filters: { expanded: false, visible: false },
         pageNavigation: { visible: false },
@@ -123,10 +127,18 @@
   }
 
   function applyEmbedHeight(container) {
-    var h = global.PASSGP_PBI_EMBED_HEIGHT || '900px';
+    var custom = global.PASSGP_PBI_EMBED_HEIGHT;
     container.style.width = '100%';
-    container.style.height = h;
-    container.style.minHeight = h;
+    if (custom) {
+      container.style.height = custom;
+      container.style.minHeight = custom;
+      return;
+    }
+    // Power BI standard 16:9 canvas — same approach as Microsoft embed samples
+    container.style.aspectRatio = '16 / 9';
+    container.style.minHeight = '480px';
+    container.style.maxHeight = '75vh';
+    container.style.height = 'auto';
   }
 
   function embedPassgpReport(container, data) {
