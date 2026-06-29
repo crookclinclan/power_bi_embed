@@ -171,6 +171,7 @@
     fetchStarted = true;
 
     var targets = pendingTargets.slice();
+    pendingTargets = [];
     var session;
 
     try {
@@ -185,9 +186,13 @@
     }
 
     cachedSession = session;
-    pendingTargets = [];
     for (var j = 0; j < targets.length; j++) {
       deliverSession(targets[j], session);
+    }
+    // Deliver to any targets queued while fetch was in flight (e.g. fullscreen tab)
+    if (pendingTargets.length) {
+      fetchStarted = false;
+      servePendingTargets();
     }
   }
 
@@ -202,18 +207,38 @@
 
   function bindFullscreenLink() {
     if (!API_BASE) return;
-    var link = document.getElementById(FULLSCREEN_LINK_ID);
-    if (!link || link.dataset.passgpBound === '1') return;
-    link.dataset.passgpBound = '1';
-    link.href = API_BASE + FULLSCREEN_PATH;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.addEventListener('click', function (e) {
-      e.preventDefault();
-      var win = window.open(API_BASE + FULLSCREEN_PATH, '_blank', 'noopener,noreferrer');
-      if (!win) return;
-      onFrameReady(win);
-    });
+    var selector =
+      '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]';
+    var links = document.querySelectorAll(selector);
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i];
+      if (link.dataset.passgpBound === '1') continue;
+      link.dataset.passgpBound = '1';
+      link.href = API_BASE + FULLSCREEN_PATH;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      // Native navigation — new tab keeps window.opener so fullscreen page can auth
+    }
+  }
+
+  function installFullscreenDelegation() {
+    if (window.__PASSGP_FULLSCREEN_CLICK__) return;
+    window.__PASSGP_FULLSCREEN_CLICK__ = true;
+    document.addEventListener(
+      'click',
+      function (e) {
+        if (!API_BASE) return;
+        var link =
+          e.target.closest &&
+          e.target.closest(
+            '[data-passgp-fullscreen], #' + FULLSCREEN_LINK_ID + ', a[href*="kajabi-fullscreen"]',
+          );
+        if (!link) return;
+        link.href = API_BASE + FULLSCREEN_PATH;
+        link.target = '_blank';
+      },
+      true,
+    );
   }
 
   async function runDirectEmbed(container) {
@@ -258,6 +283,7 @@
   }
 
   function boot() {
+    installFullscreenDelegation();
     bindFullscreenLink();
     if (bootDirect()) return;
     bootIframe();
@@ -279,6 +305,6 @@
   var pollTimer = setInterval(function () {
     poll += 1;
     boot();
-    if (poll > 120) clearInterval(pollTimer);
+    if (poll > 600) clearInterval(pollTimer);
   }, 500);
 })();
