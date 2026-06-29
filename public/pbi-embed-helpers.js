@@ -1,11 +1,13 @@
 /**
  * Shared Power BI embed helpers for PassGP (kajabi-embed.js + embed-test.html).
- * Opens the results page directly and applies the member_ID filter at embed time.
+ * Opens View My Results directly, hides page tabs, applies member_ID filter.
  */
 (function (global) {
   'use strict';
 
   var LANDING_PAGE_RE = /access your results|enter.*email|welcome to|landing/i;
+  var EXCLUDED_EMBED_PAGE_RE = /\bqa\b|admin|debug|internal/i;
+  var RESULTS_PAGE_RE = /view my results|my results/i;
 
   function buildMemberFilter(memberId, table, column) {
     return {
@@ -23,6 +25,17 @@
     return data.resultsPageName || global.PASSGP_PBI_RESULTS_PAGE || '';
   }
 
+  function embedPaneSettings(models) {
+    return {
+      navContentPaneEnabled: false,
+      panes: {
+        filters: { expanded: false, visible: false },
+        pageNavigation: { visible: false },
+      },
+      background: models.BackgroundType.Transparent,
+    };
+  }
+
   function buildEmbedConfig(data) {
     var models = global['powerbi-client'].models;
     var filterMeta = data.rlsFilter || data.emailFilter || {};
@@ -36,10 +49,7 @@
       accessToken: data.accessToken,
       embedUrl: data.embedUrl,
       id: data.reportId,
-      settings: {
-        panes: { filters: { expanded: false, visible: false } },
-        background: models.BackgroundType.Transparent,
-      },
+      settings: embedPaneSettings(models),
     };
 
     if (filterValue) {
@@ -56,15 +66,39 @@
   function findResultsPage(pages) {
     if (!pages || !pages.length) return null;
 
-    for (var i = 0; i < pages.length; i++) {
-      var name = pages[i].displayName || '';
-      if (!LANDING_PAGE_RE.test(name)) return pages[i];
+    var i;
+    for (i = 0; i < pages.length; i++) {
+      var label = pages[i].displayName || pages[i].name || '';
+      if (RESULTS_PAGE_RE.test(label)) return pages[i];
+    }
+
+    for (i = 0; i < pages.length; i++) {
+      var displayName = pages[i].displayName || '';
+      var internalName = pages[i].name || '';
+      if (LANDING_PAGE_RE.test(displayName)) continue;
+      if (EXCLUDED_EMBED_PAGE_RE.test(displayName) || EXCLUDED_EMBED_PAGE_RE.test(internalName)) {
+        continue;
+      }
+      return pages[i];
     }
 
     return pages.length > 1 ? pages[1] : null;
   }
 
-  function skipLandingPageOnce(report) {
+  function hidePageNavigation(report) {
+    var models = global['powerbi-client'].models;
+    return report.updateSettings(embedPaneSettings(models)).catch(function () {});
+  }
+
+  function activateResultsPage(report, preferredPageName) {
+    if (preferredPageName) {
+      return report.setPage(preferredPageName).catch(function () {
+        return report.getPages().then(function (pages) {
+          var target = findResultsPage(pages);
+          if (target) return target.setActive();
+        });
+      });
+    }
     return report.getPages().then(function (pages) {
       var target = findResultsPage(pages);
       if (target) return target.setActive();
@@ -81,15 +115,34 @@
   function embedPassgpReport(container, data) {
     var config = buildEmbedConfig(data);
     var pageName = resolvePageName(data);
+    var lockedPageName = pageName || '';
     applyEmbedHeight(container);
     global.powerbi.reset(container);
     var report = global.powerbi.embed(container, config);
-    var bootDone = false;
 
     report.on('loaded', function () {
-      if (bootDone || pageName) return;
-      bootDone = true;
-      skipLandingPageOnce(report).catch(function () {});
+      hidePageNavigation(report);
+      activateResultsPage(report, pageName)
+        .then(function () {
+          if (lockedPageName) return;
+          return report.getActivePage().then(function (page) {
+            lockedPageName = page.name;
+          });
+        })
+        .catch(function () {});
+    });
+
+    report.on('rendered', function () {
+      hidePageNavigation(report);
+    });
+
+    report.on('pageChanged', function () {
+      if (!lockedPageName) return;
+      report.getActivePage().then(function (page) {
+        if (page.name !== lockedPageName) {
+          report.setPage(lockedPageName).catch(function () {});
+        }
+      }).catch(function () {});
     });
 
     return report;

@@ -7,7 +7,7 @@ import type {
   PowerBiReport,
   ResolvedMember,
 } from '../domain/types.js'
-import { LANDING_PAGE_RE } from '../lib/powerbi-pages.js'
+import { resolveResultsPage } from '../lib/powerbi-pages.js'
 import { logger } from '../lib/logger.js'
 import { getAzureAccessToken } from './azure-auth.service.js'
 
@@ -105,8 +105,7 @@ async function getResultsPageName(reportId: string): Promise<string | undefined>
 
   try {
     const pages = await getReportPages(reportId)
-    const results = pages.find((p) => !LANDING_PAGE_RE.test(p.displayName ?? ''))
-    const name = results?.name ?? pages[1]?.name
+    const name = resolveResultsPage(pages)
     if (name) cachedResultsPageName = name
     return name
   } catch (err) {
