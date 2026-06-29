@@ -9,10 +9,13 @@
   var API_BASE = (window.PASSGP_EMBED_API || '').replace(/\/$/, '');
   var API_KEY = (window.PASSGP_EMBED_API_KEY || '').trim();
   var CONTAINER_ID = 'passgp-pbi-report';
+  var FULLSCREEN_LINK_ID = 'passgp-pbi-fullscreen';
   var FRAME_PATH = '/kajabi-frame.html';
+  var FULLSCREEN_PATH = '/kajabi-fullscreen.html';
   var PBI_CDN = 'https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js';
   var pendingTargets = [];
   var fetchStarted = false;
+  var cachedSession = null;
 
   function getMemberId() {
     try {
@@ -76,7 +79,10 @@
   function isPassgpFrame(el) {
     if (!el || el.tagName !== 'IFRAME') return false;
     var src = (el.getAttribute('src') || '').toLowerCase();
-    return src.indexOf('kajabi-frame.html') !== -1 || src.indexOf('passgp-powerbi-embed') !== -1;
+    return src.indexOf('kajabi-frame.html') !== -1 ||
+      src.indexOf('kajabi-fullscreen.html') !== -1 ||
+      src.indexOf('passgp-powerbi-embed') !== -1 ||
+      src.indexOf('power-bi-embed') !== -1;
   }
 
   function findEmbedIframe() {
@@ -150,7 +156,18 @@
   }
 
   async function servePendingTargets() {
-    if (fetchStarted || !pendingTargets.length) return;
+    if (!pendingTargets.length) return;
+
+    if (cachedSession) {
+      var ready = pendingTargets.slice();
+      pendingTargets = [];
+      for (var k = 0; k < ready.length; k++) {
+        deliverSession(ready[k], cachedSession);
+      }
+      return;
+    }
+
+    if (fetchStarted) return;
     fetchStarted = true;
 
     var targets = pendingTargets.slice();
@@ -167,6 +184,8 @@
       return;
     }
 
+    cachedSession = session;
+    pendingTargets = [];
     for (var j = 0; j < targets.length; j++) {
       deliverSession(targets[j], session);
     }
@@ -174,7 +193,27 @@
 
   function onFrameReady(sourceWindow) {
     queueTarget(sourceWindow);
+    if (cachedSession) {
+      deliverSession(sourceWindow, cachedSession);
+      return;
+    }
     servePendingTargets();
+  }
+
+  function bindFullscreenLink() {
+    if (!API_BASE) return;
+    var link = document.getElementById(FULLSCREEN_LINK_ID);
+    if (!link || link.dataset.passgpBound === '1') return;
+    link.dataset.passgpBound = '1';
+    link.href = API_BASE + FULLSCREEN_PATH;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.addEventListener('click', function (e) {
+      e.preventDefault();
+      var win = window.open(API_BASE + FULLSCREEN_PATH, '_blank', 'noopener,noreferrer');
+      if (!win) return;
+      onFrameReady(win);
+    });
   }
 
   async function runDirectEmbed(container) {
@@ -219,6 +258,7 @@
   }
 
   function boot() {
+    bindFullscreenLink();
     if (bootDirect()) return;
     bootIframe();
   }
